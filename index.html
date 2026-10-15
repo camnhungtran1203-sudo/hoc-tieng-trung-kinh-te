@@ -355,6 +355,14 @@ section.block{padding:56px 24px;}
   padding:18px;cursor:pointer;box-shadow:var(--shadow);
   display:flex;flex-direction:column;gap:6px;transition:transform .15s ease, border-color .15s;
 }
+.learn-btn{margin-top:10px;align-self:flex-start;padding:5px 12px;border-radius:8px;border:1px solid var(--jade);background:transparent;color:var(--jade);font-size:12.5px;font-weight:600;cursor:pointer;font-family:var(--sans);}
+.speak-btn{border:0;background:var(--paper-2);border-radius:50%;width:30px;height:30px;font-size:15px;line-height:1;cursor:pointer;vertical-align:middle;margin-left:4px;padding:0;color:var(--navy);transition:background .15s,transform .15s;}
+.speak-btn:hover{background:var(--line);} .speak-btn.playing{background:var(--seal);transform:scale(1.1);}
+.word-card .zh .speak-btn{width:26px;height:26px;font-size:13px;}
+.modal .zh-huge .speak-btn{width:38px;height:38px;font-size:19px;}
+.learned-tag{margin-top:6px;font-size:12px;font-weight:700;color:var(--jade);min-height:0;} .learned-tag:empty{display:none;}
+.learn-btn:hover{background:var(--paper-2);} .learn-btn.on{background:var(--jade);color:#fff;}
+.word-card{display:flex;flex-direction:column;} .wotd-card{display:flex;flex-direction:column;}
 .word-card:hover{transform:translateY(-2px);border-color:var(--seal);}
 .word-card-top{display:flex;justify-content:space-between;align-items:flex-start;}
 .word-card .zh{font-size:24px;color:var(--navy);}
@@ -638,7 +646,7 @@ footer small{display:block;margin-top:6px;font-size:12px;color:rgba(255,255,255,
         <div>
           <span class="eyebrow">每日印章 · Con dấu mỗi ngày</span>
           <h2>今日重点词汇 · Từ vựng nổi bật trong ngày</h2>
-          <div class="sub">每天随机选出三个词，点击卡片查看详情。<br>Ba từ được chọn ngẫu nhiên theo ngày — nhấn vào thẻ để xem chi tiết đầy đủ.</div>
+          <div class="sub">在「词汇库」打开词条，点击“已学”，该词今天会出现在这里。<br>Mở một từ trong Kho từ vựng rồi nhấn <b>已学 · Đã học</b> — từ đó sẽ được chuyển vào đây theo ngày. Nhấn vào thẻ để xem chi tiết (có thể bỏ đánh dấu trong đó).<div id="wotdCount" style="margin-top:6px;font-family:var(--mono);font-size:12px;"></div></div>
         </div>
       </div>
       <div class="wotd-grid" id="wotdGrid"></div>
@@ -3407,11 +3415,62 @@ function dayOfYearSeed(){
    RENDER: TRANG CHỦ
    ====================================================================== */
 const seed = dayOfYearSeed();
-const wotd = seededPick(allWords, 3, seed + 7);
+/* ---- Phát âm tiếng Trung (Web Speech API, giọng zh-CN của thiết bị) ---- */
+let zhVoice=null;
+function pickZhVoice(){
+  if(!('speechSynthesis' in window)) return null;
+  const vs=speechSynthesis.getVoices().filter(v=>/^zh[-_](CN|Hans)/i.test(v.lang)||v.lang==='zh');
+  const pref=['Xiaoxiao','Xiaoyi','Yunxi','Google 普通话','Ting-Ting','Tingting','Meijia','Huihui','Lili'];
+  for(const p of pref){const f=vs.find(v=>v.name.includes(p)); if(f) return f;}
+  return vs[0]||null;
+}
+if('speechSynthesis' in window){ speechSynthesis.onvoiceschanged=()=>{zhVoice=pickZhVoice();}; zhVoice=pickZhVoice(); }
+function speakZh(text, btn){
+  if(!('speechSynthesis' in window)){ alert('Trình duyệt này không hỗ trợ phát âm. 此浏览器不支持语音朗读。'); return; }
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang='zh-CN'; u.rate=0.85; u.pitch=1;
+  const v=zhVoice||pickZhVoice(); if(v) u.voice=v;
+  if(btn){ btn.classList.add('playing'); u.onend=u.onerror=()=>btn.classList.remove('playing'); }
+  speechSynthesis.speak(u);
+}
+function speakBtn(hanzi){ return `<button type="button" class="speak-btn" data-say="${hanzi}" aria-label="发音 Phát âm" title="发音 · Phát âm">🔊</button>`; }
+document.addEventListener('click',e=>{
+  const b=e.target.closest('.speak-btn'); if(!b) return;
+  e.stopPropagation(); e.preventDefault(); speakZh(b.dataset.say,b);
+},true);
+
+/* ---- Từ đã học (已学) — lưu localStorage, từ vựng của ngày = từ đã học hôm nay ---- */
+const LEARN_KEY='learnedWordsV1';
+function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+let learned=[]; // [{k:'catid|hanzi', d:'YYYY-MM-DD', t:timestamp}]
+try{ learned=JSON.parse(localStorage.getItem(LEARN_KEY)||'[]'); if(!Array.isArray(learned)) learned=[]; }catch(e){ learned=[]; }
+function saveLearned(){ try{ localStorage.setItem(LEARN_KEY, JSON.stringify(learned)); }catch(e){} }
+function wKey(w){ return w.cat.id+'|'+w.hanzi; }
+function isLearned(w){ return learned.some(x=>x.k===wKey(w)); }
+function toggleLearned(w){
+  const k=wKey(w), i=learned.findIndex(x=>x.k===k);
+  if(i>=0) learned.splice(i,1); else learned.push({k, d:todayStr(), t:Date.now()});
+  saveLearned(); renderHeroCard(); renderWotd();
+}
+function todaysWords(){
+  return learned.filter(x=>x.d===todayStr()).sort((a,b)=>b.t-a.t)
+    .map(x=>allWords.find(w=>wKey(w)===x.k)).filter(Boolean);
+}
+function learnBtnHtml(w){
+  const on=isLearned(w);
+  return `<button class="learn-btn ${on?'on':''}" data-hanzi="${w.hanzi}" data-catid="${w.cat.id}">${on?'✓ 已学 · Đã học':'已学 · Đã học'}</button>`;
+}
 
 function renderHeroCard(){
-  const w = wotd[0];
+  const w = todaysWords()[0];
   const el = document.getElementById('heroWordCard');
+  if(!w){
+    el.innerHTML = `<div class="label">Từ vựng của ngày</div>
+      <div class="zh-big zh" style="opacity:.35">—</div>
+      <div class="meaning">暂无 · Chưa có từ nào. Vào <b>Kho từ vựng</b> và nhấn <b>已学 · Đã học</b> để từ xuất hiện ở đây.</div>`;
+    return;
+  }
   el.innerHTML = `
     <div class="label">Từ vựng của ngày</div>
     <div class="zh-big zh">${w.hanzi}</div>
@@ -3425,17 +3484,31 @@ function renderHeroCard(){
 
 function renderWotd(){
   const grid = document.getElementById('wotdGrid');
-  grid.innerHTML = wotd.map(w=>`
-    <div class="wotd-card" data-hanzi="${w.hanzi}">
+  const ws = todaysWords();
+  const cnt = document.getElementById('wotdCount');
+  if(cnt) cnt.textContent = `今日已学 · Hôm nay đã học: ${ws.length} từ · 累计 · Tổng cộng: ${learned.length} từ`;
+  if(!ws.length){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="ic">🈴</div><div>今天还没有已学的词。到「词汇库」打开词条并点击“已学”按钮，词语就会出现在这里。<br>Hôm nay chưa có từ nào. Vào <b>Kho từ vựng</b>, mở một từ và nhấn nút <b>已学 · Đã học</b>, từ đó sẽ xuất hiện ở đây.</div></div>`;
+    return;
+  }
+  grid.innerHTML = ws.map(w=>`
+    <div class="wotd-card" data-hanzi="${w.hanzi}" data-catid="${w.cat.id}">
       <div class="hsk-badge">${w.hsk.replace('Chuyên ngành','专业').replace('HSK ','H')}</div>
-      <div class="zh">${w.hanzi}</div>
+      <div class="zh">${w.hanzi} ${speakBtn(w.hanzi)}</div>
       <div class="pinyin">${w.pinyin}</div>
       <div class="meaning">${w.meaning}</div>
       <div class="cat">${w.cat.ic} ${w.cat.vi}</div>
     </div>
   `).join('');
-  grid.querySelectorAll('.wotd-card').forEach((card,i)=>{
-    card.addEventListener('click', ()=> openModal(wotd[i]));
+  grid.querySelectorAll('.wotd-card').forEach(card=>{
+    const w=allWords.find(x=>x.hanzi===card.dataset.hanzi && x.cat.id===card.dataset.catid);
+    card.addEventListener('click', ()=> openModal(w));
+  });
+}
+function syncLearnButtons(){
+  document.querySelectorAll('#vocabList .word-card').forEach(c=>{
+    const w=allWords.find(x=>x.hanzi===c.dataset.hanzi && x.cat.id===c.dataset.catid); if(!w) return;
+    const t=c.querySelector('.learned-tag'); if(t) t.textContent=isLearned(w)?'✓ 已学 · Đã học':'';
   });
 }
 
@@ -3641,12 +3714,13 @@ function renderVocabList(){
           ${words.map(w=>`
             <div class="word-card" data-hanzi="${w.hanzi}" data-catid="${c.id}">
               <div class="word-card-top">
-                <span class="zh">${w.hanzi}</span>
+                <span class="zh">${w.hanzi} ${speakBtn(w.hanzi)}</span>
                 <span class="pos">${w.pos.split(' / ')[0]}</span>
               </div>
               <span class="pinyin">${w.pinyin}</span>
               <span class="meaning">${w.meaning}</span>
               <span class="hsk">${w.hsk}</span>
+              <span class="learned-tag">${isLearned(w)?'✓ 已学 · Đã học':''}</span>
             </div>
           `).join('')}
         </div>
@@ -3679,13 +3753,14 @@ function openModal(w){
     <div class="mhead">
       <div class="seal small"><span>${w.cat.zh.slice(0,1)}</span></div>
       <div>
-        <div class="zh-huge zh">${w.hanzi}</div>
+        <div class="zh-huge zh">${w.hanzi} ${speakBtn(w.hanzi)}</div>
         <div class="pinyin">${w.pinyin}</div>
         <div class="pos-line">${w.pos}</div>
       </div>
     </div>
     <div class="meaning-big">${w.meaning}</div>
     <span class="hsk-pill">${w.hsk} · ${w.cat.ic} ${w.cat.vi}</span>
+    <div>${learnBtnHtml(w)}</div>
 
     <div class="field">
       <div class="flabel">英文 English</div>
@@ -3719,6 +3794,11 @@ function openModal(w){
   document.getElementById('modalOverlay').classList.add('open');
   document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
   renderStrokeOrder(w.hanzi);
+  const lb=modal.querySelector('.learn-btn');
+  lb.addEventListener('click',()=>{
+    toggleLearned(w); syncLearnButtons();
+    const on=isLearned(w); lb.classList.toggle('on',on); lb.textContent=on?'✓ 已学 · Đã học':'已学 · Đã học';
+  });
 }
 
 /* Vẽ nét bút thuận bằng HanziWriter (tải dữ liệu nét chữ qua CDN khi mở modal) */
